@@ -53,7 +53,16 @@ resource "aws_eks_cluster" "this" {
     }
   }
 
-  # API auth mode required for Auto Mode access entries
+  # API auth mode required for Auto Mode access entries.
+  #
+  # NOTE: the Terraform AWS provider defaults
+  # bootstrap_cluster_creator_admin_permissions to FALSE (the underlying EKS
+  # API defaults it to true — this is a known provider discrepancy). With
+  # authentication_mode = "API" and no bootstrap, the principal running
+  # `terraform apply` gets NO Kubernetes RBAC access, which would break the
+  # kubectl apply in nodepool.tf. We grant access explicitly via the
+  # aws_eks_access_entry resources below instead, which also avoids the
+  # create-time-only / forces-replacement behavior of the bootstrap flag.
   access_config {
     authentication_mode = "API"
   }
@@ -75,4 +84,30 @@ resource "aws_eks_cluster" "this" {
   ]
 
   tags = var.tags
+}
+
+# ---------------------------------------------------------------------------
+# Cluster admin access for the Terraform caller
+#
+# Grants the IAM principal running `terraform apply` cluster-admin RBAC so the
+# local-exec `kubectl apply` of the ARM NodePool (nodepool.tf) is authorized.
+# This replaces relying on bootstrap_cluster_creator_admin_permissions.
+# ---------------------------------------------------------------------------
+data "aws_caller_identity" "current" {}
+
+resource "aws_eks_access_entry" "admin" {
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = data.aws_caller_identity.current.arn
+}
+
+resource "aws_eks_access_policy_association" "admin" {
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = data.aws_caller_identity.current.arn
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [aws_eks_access_entry.admin]
 }

@@ -1,0 +1,33 @@
+# ── Cluster / kubeconfig ──────────────────────────────────────────────────────
+cluster_name    = "dvb-eks-arm"
+kubeconfig_path = "~/.kube/config"
+kube_context    = "dvb-eks-arm" # matches the --alias used in the cluster Terraform
+
+# ── EBS storage ───────────────────────────────────────────────────────────────
+cluster_is_auto_mode          = true   # the ARM cluster from terraform/amazon is Auto Mode
+ebs_storage_class_name        = "ebs-gp3"
+ebs_set_default_storage_class = true
+install_ebs_csi_driver        = false  # MUST stay false on Auto Mode
+
+# ── Octopus connection ────────────────────────────────────────────────────────
+octopus_server_url  = "https://your-instance.octopus.app"
+octopus_polling_url = "https://your-instance.octopus.app"
+octopus_grpc_url    = "grpcs://your-instance.octopus.app:443" # only if k8s monitor enabled
+octopus_space_id    = "Spaces-1"
+octopus_space_name  = "Default"
+
+# octopus_api_key — prefer the environment variable:
+#   export TF_VAR_octopus_api_key="API-xxxx"
+
+# ── Project / environments ────────────────────────────────────────────────────
+kubearchinspect_project_group_name = "Platform Tooling"
+kubearchinspect_project_name       = "kubearchinspect"
+environments                       = ["Development", "Staging", "Production"]
+
+# ── Agent / worker ────────────────────────────────────────────────────────────
+install_octopus_agent       = true
+install_octopus_worker      = true
+octopus_agent_chart_version = "2.36.0"
+octopus_agent_tags          = ["kubernetes", "eks-arm"]
+octopus_worker_pool_name    = "EKS ARM Workers"
+octopus_worker_count        = 2

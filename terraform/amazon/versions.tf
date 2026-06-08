@@ -1,22 +1,18 @@
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.0"
 
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.80"
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.23"
     }
-    null = {
-      source  = "hashicorp/null"
-      version = "~> 3.2"
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.11"
     }
-    local = {
-      source  = "hashicorp/local"
-      version = "~> 2.5"
+    octopusdeploy = {
+      source  = "OctopusDeploy/octopusdeploy"
+      version = "~> 1.9"
     }
   }
-}
-
-provider "aws" {
-  region = var.aws_region
 }

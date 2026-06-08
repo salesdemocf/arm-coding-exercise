@@ -96,9 +96,12 @@ resource "null_resource" "arm_nodepool" {
     EOT
   }
 
+  # Wait for the cluster, the manifest file, AND the caller's cluster-admin
+  # access entry — otherwise the kubectl apply runs before the principal is
+  # authorized against the API server and fails with "Unauthorized".
   depends_on = [
     aws_eks_cluster.this,
     local_file.arm_nodepool_manifest,
+    aws_eks_access_policy_association.admin,
   ]
 }
-
