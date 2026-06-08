@@ -1,0 +1,78 @@
+# =========================
+# Terraform State Files
+# =========================
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# State lock files
+.terraform.tfstate.lock.info
+
+# =========================
+# Terraform Working Directory
+# =========================
+.terraform/
+.terraform.lock.hcl
+
+# =========================
+# Sensitive Variable Files
+# =========================
+*.tfvars
+*.tfvars.json
+
+# Allow example/template var files if you want to commit them
+!*.tfvars.example
+!*.tfvars.template
+
+# =========================
+# Crash & Debug Logs
+# =========================
+crash.log
+crash.*.log
+*.log
+
+# =========================
+# Override Files
+# (often used for local dev overrides — don't commit)
+# =========================
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# =========================
+# Plan Output Files
+# (may contain sensitive data)
+# =========================
+*.tfplan
+*.plan
+plan.out
+
+# =========================
+# CLI Config / Credentials
+# =========================
+.terraformrc
+terraform.rc
+
+# =========================
+# Environment / Secrets
+# =========================
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.yaml
+secrets.yml
+secrets.json
+
+# =========================
+# IDE & OS Noise
+# =========================
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
