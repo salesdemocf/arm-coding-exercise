@@ -1,0 +1,75 @@
+{{- if .Values.rbac.create -}}
+{{- if eq .Values.rbac.scope "cluster" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kubearchinspect.fullname" . }}
+  labels:
+    {{- include "kubearchinspect.labels" . | nindent 4 }}
+rules:
+  # Required to list all pods and read their image specs across namespaces
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # Required to list nodes (for architecture info)
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  # Required to read image pull secrets for private registries
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+  # Required to list namespaces when scanning all
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kubearchinspect.fullname" . }}
+  labels:
+    {{- include "kubearchinspect.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kubearchinspect.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kubearchinspect.serviceAccountName" . }}
+    namespace: {{ include "kubearchinspect.namespace" . }}
+{{- else if eq .Values.rbac.scope "namespace" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kubearchinspect.fullname" . }}
+  namespace: {{ include "kubearchinspect.namespace" . }}
+  labels:
+    {{- include "kubearchinspect.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kubearchinspect.fullname" . }}
+  namespace: {{ include "kubearchinspect.namespace" . }}
+  labels:
+    {{- include "kubearchinspect.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "kubearchinspect.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kubearchinspect.serviceAccountName" . }}
+    namespace: {{ include "kubearchinspect.namespace" . }}
+{{- end }}
+{{- end }}

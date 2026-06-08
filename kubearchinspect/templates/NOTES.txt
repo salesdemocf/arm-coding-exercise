@@ -1,0 +1,34 @@
+╔═══════════════════════════════════════════════════════════╗
+║           kubearchinspect - ARM64 Verification Job        ║
+║      Arm Developer Ecosystem Open Source Project          ║
+╚═══════════════════════════════════════════════════════════╝
+
+Release:   {{ .Release.Name }}
+Namespace: {{ include "kubearchinspect.namespace" . }}
+Version:   {{ .Chart.AppVersion }}
+
+The kubearchinspect Job has been submitted. To monitor it:
+
+  # Watch job status
+  kubectl get job {{ include "kubearchinspect.fullname" . }} \
+    -n {{ include "kubearchinspect.namespace" . }} -w
+
+  # Get the pod name
+  kubectl get pods \
+    -n {{ include "kubearchinspect.namespace" . }} \
+    -l app.kubernetes.io/name={{ include "kubearchinspect.name" . }}
+
+  # Stream the scan results
+  kubectl logs \
+    -n {{ include "kubearchinspect.namespace" . }} \
+    -l app.kubernetes.io/name={{ include "kubearchinspect.name" . }} -f
+
+Output legend:
+  ✅  arm64 compatible
+  🆙  arm64 compatible after update
+  ❌  NOT arm64 compatible
+  🚫  error (auth or connectivity)
+
+NOTE: The Job pod will be automatically cleaned up
+{{ .Values.job.ttlSecondsAfterFinished }} seconds after completion.
+Save the logs before then if needed.

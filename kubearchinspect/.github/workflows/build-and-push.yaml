@@ -1,0 +1,223 @@
+name: Build and Push to JFrog
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: true
+        type: string
+
+env:
+  SERVICE_NAME: ${{ vars.OCTOPUS_SERVICE }}
+
+jobs:
+  build-and-push:
+    name: Build and Push Service
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate semver tag
+        id: semver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.version }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          
+          echo "Original tag: $TAG"
+          VERSION="${TAG#v}"
+          echo "Version without prefix: $VERSION"
+          
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'; then
+            echo "Error: Tag '$TAG' is not a valid semver format"
+            exit 1
+          fi
+          
+          echo "✓ Valid semver tag: $VERSION"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to JFrog Artifactory
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.JFROG_REGISTRY }}
+          username: ${{ secrets.JFROG_USERNAME }}
+          password: ${{ secrets.JFROG_PASSWORD }}
+
+      - name: Extract metadata
+        id: meta
+        run: |
+          VERSION="${{ steps.semver.outputs.version }}"
+          BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          
+          REGISTRY="${{ vars.JFROG_REGISTRY }}"
+          REPOSITORY="${{ vars.JFROG_REPOSITORY }}"
+          IMAGE_NAME="${{ env.SERVICE_NAME }}"
+          FULL_IMAGE="${REGISTRY}/${REPOSITORY}/${IMAGE_NAME}"
+          
+          TAGS="${FULL_IMAGE}:${VERSION}"
+          TAGS="${TAGS},${FULL_IMAGE}:latest"
+          
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          MINOR=$(echo "$VERSION" | cut -d. -f2)
+          
+          if ! echo "$VERSION" | grep -q '-'; then
+            TAGS="${TAGS},${FULL_IMAGE}:${MAJOR}"
+            TAGS="${TAGS},${FULL_IMAGE}:${MAJOR}.${MINOR}"
+          fi
+          
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "build_date=${BUILD_DATE}" >> $GITHUB_OUTPUT
+          echo "full_image=${FULL_IMAGE}" >> $GITHUB_OUTPUT
+          echo "image_uri=${FULL_IMAGE}:${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            KUBEARCHINSPECT_VERSION=0.7.0
+            IMAGE=${{ steps.meta.outputs.image_uri }}
+            TEXT_COLOR=${{ vars.TEXT_COLOR || '#FFFFFF' }}
+            BG_COLOR=${{ vars.BG_COLOR || '#2C3E50' }}
+          labels: |
+            org.opencontainers.image.source=${{ github.repositoryUrl }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.build_date }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Get commit information
+        id: commit-info
+        run: |
+          COMMIT_MESSAGE=$(git log -1 --pretty=%B | head -n 1)
+          COMMIT_AUTHOR=$(git log -1 --pretty=format:'%an')
+          COMMIT_EMAIL=$(git log -1 --pretty=format:'%ae')
+          
+          echo "message=${COMMIT_MESSAGE}" >> $GITHUB_OUTPUT
+          echo "author=${COMMIT_AUTHOR}" >> $GITHUB_OUTPUT
+          echo "email=${COMMIT_EMAIL}" >> $GITHUB_OUTPUT
+
+      - name: Install Octopus CLI
+        uses: OctopusDeploy/install-octopus-cli-action@v3
+        with:
+          version: latest
+
+      - name: Generate Build Information
+        id: build-info
+        run: |
+          COMMITS_JSON=$(git log -10 --format="%H%n%s%n%an%n%ae%n%aI%n---" | \
+          python3 -c "
+          import sys, json
+          commits = []
+          lines = sys.stdin.read().split('\n---\n')
+          for block in lines:
+              parts = block.strip().split('\n')
+              if len(parts) >= 5:
+                  sha = parts[0]
+                  commits.append({
+                      'Id': sha,
+                      'LinkUrl': '${{ github.server_url }}/${{ github.repository }}/commit/' + sha,
+                      'Comment': parts[1],
+                      'AuthorName': parts[2],
+                      'AuthorEmail': parts[3],
+                      'Timestamp': parts[4]
+                  })
+          print(json.dumps(commits))
+          ")
+
+          BRANCH="${{ github.head_ref || github.ref_name }}"
+
+          cat > build-info.json << EOF
+          {
+            "BuildEnvironment": "GitHub Actions",
+            "BuildNumber": "${{ github.run_number }}",
+            "BuildUrl": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "Branch": "${BRANCH}",
+            "VcsType": "Git",
+            "VcsRoot": "${{ github.server_url }}/${{ github.repository }}.git",
+            "VcsCommitNumber": "${{ github.sha }}",
+            "VcsCommitUrl": "${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}",
+            "BuildAgent": "GitHub Actions Runner (${{ runner.name }})",
+            "BuildAgentOS": "${{ runner.os }}",
+            "BuildAttempt": "${{ github.run_attempt }}",
+            "WorkflowName": "${{ github.workflow }}",
+            "WorkflowRef": "${{ github.workflow_ref }}",
+            "TriggeredBy": "${{ github.actor }}",
+            "TriggeredByUrl": "${{ github.server_url }}/${{ github.actor }}",
+            "TriggerEvent": "${{ github.event_name }}",
+            "Repository": "${{ github.repository }}",
+            "RepositoryUrl": "${{ github.server_url }}/${{ github.repository }}",
+            "PullRequestNumber": "${{ github.event.pull_request.number }}",
+            "PullRequestTitle": "${{ github.event.pull_request.title }}",
+            "PullRequestUrl": "${{ github.event.pull_request.html_url }}",
+            "Commits": ${COMMITS_JSON}
+          }
+          EOF
+
+          echo "Build information file generated:"
+          cat build-info.json | jq .
+
+      - name: Push Build Information to Octopus Deploy
+        env:
+          OCTOPUS_URL: ${{ secrets.OCTOPUS_SERVER_URL }}
+          OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
+          OCTOPUS_SPACE: ${{ vars.OCTOPUS_SPACE }}
+        run: |
+          octopus build-information push \
+            --package-id="${{ env.SERVICE_NAME }}" \
+            --version="${{ steps.meta.outputs.version }}" \
+            --file="build-info.json" \
+            --overwrite-mode=OverwriteExisting
+
+      - name: Create Release in Octopus Deploy
+        uses: OctopusDeploy/create-release-action@v3
+        with:
+          api_key: ${{ secrets.OCTOPUS_API_KEY }}
+          server: ${{ secrets.OCTOPUS_SERVER_URL }}
+          space: ${{ vars.OCTOPUS_SPACE }}
+          project: ${{ vars.OCTOPUS_PROJECT }}
+          package_version: ${{ steps.meta.outputs.version }}
+          release_number: ${{ steps.meta.outputs.version }}
+
+      - name: Output Summary
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Service:** ${{ env.SERVICE_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.meta.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image URI:** ${{ steps.meta.outputs.image_uri }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Author:** ${{ steps.commit-info.outputs.author }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Docker Tags Pushed" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Octopus Deploy" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Build information pushed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Release ${{ steps.meta.outputs.version }} created" >> $GITHUB_STEP_SUMMARY

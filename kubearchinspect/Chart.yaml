@@ -1,0 +1,20 @@
+apiVersion: v2
+name: kubearchinspect
+description: >
+  Deploys Arm's kubearchinspect tool as a Kubernetes Job to verify that all
+  container images running in the cluster have arm64 architecture support.
+  Built from the official Arm Developer Ecosystem open source project:
+  https://github.com/ArmDeveloperEcosystem/kubearchinspect
+type: application
+version: 0.1.0
+appVersion: "0.7.0"
+keywords:
+  - arm
+  - arm64
+  - architecture
+  - verification
+  - graviton
+sources:
+  - https://github.com/ArmDeveloperEcosystem/kubearchinspect
+maintainers:
+  - name: dustin.vanbuskirk

@@ -1,0 +1,95 @@
+# kubearchinspect Helm Chart Values
+# Arm Developer Ecosystem - ARM64 Architecture Verification Job
+# https://github.com/ArmDeveloperEcosystem/kubearchinspect
+
+# -- Image configuration
+# NOTE: Arm does not publish an official container image for kubearchinspect.
+# You must build and push your own image to ECR using the provided Dockerfile.
+# See the README for build instructions.
+image:
+  repository: "codedev.jfrog.io/dvb-demo/kubearchinspect"  # e.g. 336151728602.dkr.ecr.us-east-1.amazonaws.com/kubearchinspect
+  tag: "0.7.0"
+  pullPolicy: IfNotPresent
+
+# -- Job configuration
+job:
+  # Automatically delete the Job this many seconds after completion (success or failure).
+  # Set to 0 to delete immediately, or remove/set null to keep indefinitely.
+  ttlSecondsAfterFinished: 600
+
+  # Number of retries before marking the Job as failed
+  backoffLimit: 2
+
+  # Timeout in seconds for the entire Job. Matches kubearchinspect's internal --timeout flag.
+  activeDeadlineSeconds: 300
+
+  # Restart policy for the pod - must be Never or OnFailure for Jobs
+  restartPolicy: Never
+
+# -- kubearchinspect CLI arguments
+# These map directly to kubearchinspect command flags
+inspect:
+  # Kubernetes namespace(s) to scan. Leave empty to scan all namespaces.
+  # Example: "default" or "production"
+  namespace: ""
+
+  # If true, also checks newer image versions for arm64 compatibility
+  # (maps to --check-newer-versions flag)
+  checkNewerVersions: true
+
+  # Output verbosity: info, debug
+  logLevel: "info"
+
+# -- ServiceAccount
+serviceAccount:
+  # Create a dedicated ServiceAccount for the Job
+  create: true
+  # Name of the ServiceAccount. If empty, uses the release name.
+  name: ""
+  annotations: {}
+
+# -- RBAC
+# kubearchinspect needs read access to pods across namespaces to enumerate images
+rbac:
+  create: true
+  # Scope of the role binding.
+  # "cluster" creates a ClusterRole + ClusterRoleBinding (can scan all namespaces)
+  # "namespace" creates a Role + RoleBinding (scoped to release namespace only)
+  scope: cluster
+
+# -- Pod configuration
+pod:
+  # Annotations to add to the Job pod
+  annotations: {}
+
+  # Labels to add to the Job pod
+  labels: {}
+
+  # Node selector - pin to arm64 nodes to verify the tool itself runs on Graviton
+  nodeSelector:
+    kubernetes.io/arch: arm64
+
+  # Tolerations
+  tolerations: []
+
+  # Resource requests and limits
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  # Security context for the pod
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+
+# -- Image pull secrets (for private ECR repos)
+imagePullSecrets: []
+# - name: ecr-pull-secret
+
+# -- Namespace override. Defaults to the release namespace.
+namespaceOverride: ""
