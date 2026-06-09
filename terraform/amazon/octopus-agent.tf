@@ -90,6 +90,15 @@ resource "helm_release" "octopus_agent" {
 
 # ── Deregister the deployment target from Octopus on destroy ───────────────────
 # Requires curl + jq on the machine running terraform destroy.
+#
+# SECURITY: the Octopus API key is deliberately NOT stored in triggers. Unlike
+# the provider config and the agent's set_sensitive value, trigger values are
+# not treated as sensitive — they appear in plan output and sit readable in
+# state. A destroy-time provisioner can only reference self/count/each (never
+# var.*), so the non-secret values stay in triggers and the key is read from the
+# environment at destroy time instead: it's the same TF_VAR_octopus_api_key you
+# export to run Terraform, so it's already present in the shell. The key never
+# enters triggers, plan output, or state via this resource.
 
 resource "null_resource" "cleanup_octopus_agent" {
   count = var.install_octopus_agent ? 1 : 0
@@ -98,21 +107,30 @@ resource "null_resource" "cleanup_octopus_agent" {
     agent_name  = local.agent_name
     space_id    = var.octopus_space_id
     octopus_url = var.octopus_server_url
-    api_key     = var.octopus_api_key
   }
 
   provisioner "local-exec" {
     when    = destroy
     command = <<-EOT
+      # $TF_VAR_octopus_api_key is read from the environment, not from state.
+      # $-prefixed names without braces are literal to Terraform and resolved by
+      # the shell; $${...self...} values are interpolated by Terraform.
+      if [ -z "$TF_VAR_octopus_api_key" ]; then
+        echo "TF_VAR_octopus_api_key is not set in the environment — skipping agent deregistration."
+        echo "Either re-run destroy with 'export TF_VAR_octopus_api_key=API-...' or remove the"
+        echo "deployment target '${self.triggers.agent_name}' manually in Octopus."
+        exit 0
+      fi
+
       echo "Attempting to deregister agent '${self.triggers.agent_name}' from Octopus Deploy..."
 
-      MACHINE_ID=$(curl -s -H "X-Octopus-ApiKey: ${self.triggers.api_key}" \
+      MACHINE_ID=$(curl -s -H "X-Octopus-ApiKey: $TF_VAR_octopus_api_key" \
         "${self.triggers.octopus_url}/api/${self.triggers.space_id}/machines/all" | \
         jq -r '.[] | select(.Name=="${self.triggers.agent_name}") | .Id' | head -n 1)
 
       if [ -n "$MACHINE_ID" ] && [ "$MACHINE_ID" != "null" ]; then
         echo "Found deployment target ID: $MACHINE_ID"
-        curl -X DELETE -H "X-Octopus-ApiKey: ${self.triggers.api_key}" \
+        curl -X DELETE -H "X-Octopus-ApiKey: $TF_VAR_octopus_api_key" \
           "${self.triggers.octopus_url}/api/${self.triggers.space_id}/machines/$MACHINE_ID"
         echo "Deployment target deregistered"
       else
