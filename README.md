@@ -207,6 +207,7 @@ If you set `create_vpc = false`, none of these are created and you supply
 | `octopusdeploy_project.kubearchinspect` | the project, on the Default lifecycle |
 | `octopusdeploy_aws_elastic_container_registry.image` / `.chart` | two ECR feeds (token auto-refreshed from the CI user's keys) |
 | `octopusdeploy_process` + `octopusdeploy_process_step.helm_upgrade` | the "Upgrade a Helm Chart" deployment step |
+| `octopusdeploy_runbook.verify` (+ process/step) | the **"Verify kubearchinspect results"** runbook — runs `kubectl` in-cluster on the agent to show the arm64 report |
 | `helm_release.octopus_agent` + `null_resource.cleanup_octopus_agent` | installs the agent as a **deployment target** (tags `kubernetes`, `eks-arm`); deregisters it on destroy |
 | `octopusdeploy_static_worker_pool.this` + `helm_release.octopus_worker` | a worker pool and in-cluster workers |
 
@@ -224,14 +225,37 @@ If you set `create_vpc = false`, none of these are created and you supply
 
 Install locally and have them on your `PATH`:
 
-- **Terraform** ≥ 1.6
-- **AWS CLI v2** — used by Terraform's exec-auth, by the node-pool `kubectl`
-  step, and by the workflow
-- **kubectl** — the node-pool step applies the NodePool CRD with it
-- **git**
+- **[Terraform](https://developer.hashicorp.com/terraform/install) ≥ 1.6** — runs the whole module
+- **[AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)** — used by Terraform's exec-auth, by the node-pool `kubectl` step, and by the workflow (must be v2, not v1)
+- **[kubectl](https://kubernetes.io/docs/tasks/tools/)** — the node-pool step applies the NodePool CRD with it
+- **[git](https://git-scm.com/downloads)**
 
 You do **not** need the Helm CLI locally (the Helm provider is built in); the
 workflow installs Helm on the runner.
+
+Quick check that all four are installed and print their versions.
+
+**macOS / Linux (bash):**
+
+```bash
+for t in "terraform:terraform version" "aws:aws --version" "kubectl:kubectl version --client" "git:git --version"; do n=${t%%:*}; c=${t#*:}; command -v "$n" >/dev/null 2>&1 && printf '%-10s %s\n' "$n" "$($c 2>/dev/null | head -1)" || printf '%-10s NOT INSTALLED\n' "$n"; done
+```
+
+**Windows (PowerShell):**
+
+```powershell
+[ordered]@{terraform='version'; aws='--version'; kubectl='version --client'; git='--version'}.GetEnumerator() | ForEach-Object { if (Get-Command $_.Key -ErrorAction SilentlyContinue) { $v = (& $_.Key ($_.Value -split ' ') 2>$null | Select-Object -First 1); '{0,-10} {1}' -f $_.Key, $v } else { '{0,-10} NOT INSTALLED' -f $_.Key } }
+```
+
+The two hard requirements are `terraform` ≥ 1.6 and `aws-cli/2.x` (v1 won't work);
+any reasonably recent `kubectl` and `git` are fine. Example of a passing run:
+
+```text
+terraform  Terraform v1.9.5
+aws        aws-cli/2.17.20 Python/3.12.4 Linux/6.8.0 exe/x86_64
+kubectl    Client Version: v1.30.2
+git        git version 2.45.2
+```
 
 You'll also need three accounts/credentials, covered next: an **AWS** account your
 terminal can authenticate to, a **GitHub** account (to fork and to mint a token),
@@ -282,8 +306,42 @@ export TF_VAR_github_token="github_pat_xxxxxxxxxxxx"
 [octopus.com](https://octopus.com) and create an **Octopus Cloud** instance. Your
 instance gets a URL like `https://your-name.octopus.app` — that URL is both your
 `octopus_server_url` and `octopus_polling_url`. A fresh instance has one space
-named **Default**, whose ID is **`Spaces-1`** (`octopus_space_id = "Spaces-1"`,
-`octopus_space_name = "Default"`).
+named **Default** (`Spaces-1`).
+
+**Create the "ARM Exercise" space.** This lab runs in its own space so it stays
+isolated from anything else on your instance.
+
+1. In the Octopus Web Portal, click the **space switcher** (the current space
+   name, top-left) → **Add New Space** — or go to **Configuration → Spaces → Add
+   Space**.
+2. Name it exactly **`ARM Exercise`**.
+3. When prompted, nominate yourself (or a team) as the **Space Manager**, then
+   **Save**.
+
+> If your plan only permits a single space, skip this and use the **Default**
+> space instead (`octopus_space_id = "Spaces-1"`, `octopus_space_name = "Default"`).
+
+**Find the space ID.** Octopus gives each space an ID like `Spaces-2` — the
+number depends on how many spaces exist, so look it up rather than assume it.
+Either:
+
+- **From the URL** (no API key needed) — switch into the ARM Exercise space and
+  read the address bar: `https://your-name.octopus.app/app#/Spaces-NN/...`. That
+  `Spaces-NN` is the ID.
+- **From the API** (after you create the API key, below) — run:
+
+  ```bash
+  curl -s -H "X-Octopus-ApiKey: $TF_VAR_octopus_api_key" \
+    "https://your-name.octopus.app/api/spaces/all" \
+    | jq -r '.[] | select(.Name=="ARM Exercise") | .Id'
+  ```
+
+Set both variables to match your space:
+
+```hcl
+octopus_space_id   = "Spaces-NN"      # the ID you looked up
+octopus_space_name = "ARM Exercise"
+```
 
 **Create an API key.**
 
@@ -332,7 +390,8 @@ github_repository = "kubearchinspect"     # the name of YOUR fork
 
 octopus_server_url  = "https://your-name.octopus.app"
 octopus_polling_url = "https://your-name.octopus.app"
-octopus_space_id    = "Spaces-1"
+octopus_space_id    = "Spaces-NN"      # ID of your ARM Exercise space (see step 3)
+octopus_space_name  = "ARM Exercise"
 
 aws_region   = "us-east-1"
 cluster_name = "dvb-eks-arm"
@@ -369,19 +428,34 @@ version). Watch it under your fork's **Actions** tab.
 **In Octopus:** the project has a new release whose number matches your tag, with a
 deployment to Development.
 
-**In the cluster:**
+**The arm64 report — via the verification runbook.** Terraform creates a runbook,
+**Verify kubearchinspect results**, on the kubearchinspect project. It runs in the
+cluster on the Octopus agent, so you need no local `kubectl` or kubeconfig — the
+agent already has cluster access and reads the Job's status and pod logs for you.
+
+In the portal: **Projects → kubearchinspect → Operations → Runbooks → Verify
+kubearchinspect results → Run**, pick the environment you deployed to (e.g.
+**Development**), and **Run**. The task log shows the Job status and the report.
+
+Or from the command line with the [Octopus CLI](https://octopus.com/docs/octopus-rest-api/cli):
 
 ```bash
-aws eks update-kubeconfig --name dvb-eks-arm --region us-east-1
-
-# the kubearchinspect Job runs in kube-system
-kubectl get jobs -n kube-system
-kubectl logs -n kube-system -l app.kubernetes.io/name=kubearchinspect -f
+octopus runbook run \
+  --project kubearchinspect \
+  --name "Verify kubearchinspect results" \
+  --environment Development \
+  --space "ARM Exercise"
 ```
 
-The log legend: `✅` arm64-compatible, `🆙` compatible after an update, `❌` not
+The report legend: `✅` arm64-compatible, `🆙` compatible after an update, `❌` not
 compatible, `🚫` error. Anything but `✅`/`🆙` is an image that won't run on your
 Graviton nodes.
+
+> The kubearchinspect Job auto-deletes ~10 minutes after it finishes
+> (`job.ttlSecondsAfterFinished`), so run the runbook shortly after a deployment.
+> Prefer to check locally and have `kubectl`? Run
+> `aws eks update-kubeconfig --name <cluster> --region <region>`, then
+> `kubectl logs -n kube-system -l app.kubernetes.io/name=kubearchinspect`.
 
 ---
 
@@ -456,7 +530,7 @@ the included `.gitignore` already excludes `*.tfvars` and state files.
     ├── ecr.tf  github.tf
     ├── ebs-storage.tf  namespaces.tf
     └── octopus-feeds.tf  octopus-environments.tf  octopus-project.tf
-        octopus-process.tf  octopus-agent.tf  octopus-worker.tf
+        octopus-process.tf  octopus-runbook.tf  octopus-agent.tf  octopus-worker.tf
 ```
 
 For the full variable reference and bring-your-own-VPC/OIDC details, see
