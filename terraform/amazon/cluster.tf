@@ -4,7 +4,7 @@
 resource "aws_security_group" "cluster" {
   name        = "${var.cluster_name}-cluster-sg"
   description = "EKS cluster security group"
-  vpc_id      = var.vpc_id
+  vpc_id      = local.eks_vpc_id
 
   egress {
     from_port   = 0
@@ -39,10 +39,12 @@ resource "aws_eks_cluster" "this" {
     node_role_arn = aws_iam_role.node.arn
   }
 
-  # Auto Mode manages the AWS Load Balancer Controller
+  # Load balancing capability is disabled: this lab is egress-only and runs no
+  # Service of type LoadBalancer or Ingress, so nothing should ever mint an ELB.
+  # (compute + block storage Auto Mode capabilities below remain enabled.)
   kubernetes_network_config {
     elastic_load_balancing {
-      enabled = true
+      enabled = false
     }
   }
 
@@ -68,7 +70,7 @@ resource "aws_eks_cluster" "this" {
   }
 
   vpc_config {
-    subnet_ids              = var.subnet_ids
+    subnet_ids              = local.eks_subnet_ids
     security_group_ids      = [aws_security_group.cluster.id]
     endpoint_private_access = true
     endpoint_public_access  = true

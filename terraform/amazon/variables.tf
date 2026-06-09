@@ -1,82 +1,183 @@
-# ── Cluster / kubeconfig ──────────────────────────────────────────────────────
+# ── AWS / cluster ─────────────────────────────────────────────────────────────
+
+variable "aws_region" {
+  description = "AWS region to deploy into"
+  type        = string
+  default     = "us-east-1"
+}
 
 variable "cluster_name" {
-  description = "EKS cluster name (used to name the agent/worker)"
+  description = "EKS cluster name"
   type        = string
   default     = "dvb-eks-arm"
 }
 
-variable "kubeconfig_path" {
-  description = "Path to kubeconfig (e.g. ~/.kube/config after `aws eks update-kubeconfig`)"
+variable "cluster_version" {
+  description = "Kubernetes version for the EKS cluster"
   type        = string
-  default     = "~/.kube/config"
+  default     = "1.32"
 }
 
-variable "kube_context" {
-  description = "kubeconfig context to use. Leave empty to use the current-context. Matches the --alias passed to update-kubeconfig in the cluster Terraform."
-  type        = string
-  default     = ""
+variable "public_access_cidrs" {
+  description = "CIDR blocks allowed to reach the EKS API server endpoint"
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
 }
 
-# ── EBS storage ───────────────────────────────────────────────────────────────
+variable "tags" {
+  description = "Tags applied to all AWS resources"
+  type        = map(string)
+  default     = {}
+}
 
-variable "cluster_is_auto_mode" {
-  description = <<-EOT
-    true  -> EKS Auto Mode cluster. The EBS CSI controller is built in; we ONLY
-             create a StorageClass using the ebs.csi.eks.amazonaws.com provisioner.
-    false -> Standard EKS. We install the aws-ebs-csi-driver Helm chart (see the
-             IAM note in ebs-storage.tf) and use the ebs.csi.aws.com provisioner.
-  EOT
+# ── VPC (auto-created unless you bring your own) ───────────────────────────────
+
+variable "create_vpc" {
+  description = "Create a VPC + subnets. Set false and supply vpc_id/subnet_ids to bring your own."
   type        = bool
   default     = true
 }
 
-variable "ebs_storage_class_name" {
-  description = "Name of the gp3 StorageClass created for the Octopus agent/worker PVCs"
+variable "vpc_cidr" {
+  description = "CIDR for the created VPC"
   type        = string
-  default     = "ebs-gp3"
+  default     = "10.0.0.0/16"
 }
 
-variable "ebs_set_default_storage_class" {
-  description = "Mark the gp3 StorageClass as the cluster default (Auto Mode ships no default StorageClass)"
+variable "vpc_az_count" {
+  description = "Number of AZs (and public/private subnet pairs) to create"
+  type        = number
+  default     = 3
+}
+
+variable "single_nat_gateway" {
+  description = "Use one NAT gateway for all private subnets (cheaper) instead of one per AZ"
   type        = bool
   default     = true
 }
 
-variable "install_ebs_csi_driver" {
-  description = "Install aws-ebs-csi-driver Helm chart. MUST stay false on Auto Mode clusters (driver is built in). Only set true for standard EKS."
-  type        = bool
-  default     = false
+variable "vpc_id" {
+  description = "Existing VPC ID. Only used when create_vpc = false."
+  type        = string
+  default     = null
 }
 
-variable "ebs_csi_driver_chart_version" {
-  description = "aws-ebs-csi-driver Helm chart version (only used when install_ebs_csi_driver = true)"
+variable "subnet_ids" {
+  description = "Existing subnet IDs (private recommended). Only used when create_vpc = false."
+  type        = list(string)
+  default     = []
+}
+
+# ── ARM Graviton NodePool ──────────────────────────────────────────────────────
+
+variable "arm_nodepool_name" {
+  type    = string
+  default = "arm-graviton"
+}
+
+variable "arm_instance_categories" {
+  type    = list(string)
+  default = ["c", "m", "r"]
+}
+
+variable "arm_instance_generation_min" {
+  type    = string
+  default = "4"
+}
+
+variable "arm_capacity_type" {
+  type    = string
+  default = "on-demand"
+
+  validation {
+    condition     = contains(["on-demand", "spot"], var.arm_capacity_type)
+    error_message = "arm_capacity_type must be either 'on-demand' or 'spot'."
+  }
+}
+
+variable "arm_nodepool_cpu_limit" {
+  type    = string
+  default = "1000"
+}
+
+variable "arm_nodepool_memory_limit" {
+  type    = string
+  default = "1000Gi"
+}
+
+variable "arm_node_expire_after" {
+  type    = string
+  default = "336h"
+}
+
+# ── ECR ─────────────────────────────────────────────────────────────────────
+
+variable "ecr_repository_name" {
+  description = "ECR repository name; also used as the Octopus package/service id"
   type        = string
-  default     = "2.35.1"
+  default     = "kubearchinspect"
+}
+
+variable "ecr_image_tag_mutability" {
+  type    = string
+  default = "MUTABLE"
+}
+
+variable "ecr_scan_on_push" {
+  type    = bool
+  default = true
+}
+
+variable "ecr_force_delete" {
+  description = "Allow Terraform to delete the ECR repo even if it still holds images (handy for demo teardown)"
+  type        = bool
+  default     = true
+}
+
+variable "create_ecr_push_user" {
+  description = "Create a scoped IAM user + access key for CI to push to ECR. Disable to use GitHub OIDC instead."
+  type        = bool
+  default     = true
+}
+
+# ── GitHub ────────────────────────────────────────────────────────────────────
+
+variable "github_owner" {
+  description = "GitHub org/user that owns the forked repository"
+  type        = string
+}
+
+variable "github_token" {
+  description = "Fine-grained PAT scoped to the forked repository (Actions, Secrets, Variables: read/write)"
+  type        = string
+  sensitive   = true
+}
+
+variable "github_repository" {
+  description = "Name of the forked repository to wire Actions vars/secrets into"
+  type        = string
 }
 
 # ── Octopus connection ────────────────────────────────────────────────────────
 
 variable "octopus_server_url" {
-  description = "https://your-instance.octopus.app"
-  type        = string
+  type = string
 }
 
 variable "octopus_polling_url" {
-  description = "Polling comms address, e.g. https://your-instance.octopus.app or the dedicated polling endpoint for Octopus Cloud"
+  description = "Polling comms address for the agent/worker"
   type        = string
 }
 
 variable "octopus_grpc_url" {
-  description = "gRPC URL used by the Kubernetes monitor, e.g. grpcs://your-instance.octopus.app:443 (only needed if k8s monitoring is enabled)"
+  description = "gRPC URL for the Kubernetes monitor (only needed if enabled)"
   type        = string
   default     = ""
 }
 
 variable "octopus_api_key" {
-  description = "API-XXXXXXXX"
-  type        = string
-  sensitive   = true
+  type      = string
+  sensitive = true
 }
 
 variable "octopus_space_id" {
@@ -85,45 +186,69 @@ variable "octopus_space_id" {
 }
 
 variable "octopus_space_name" {
-  description = "Octopus space display name (the agent chart wants the name)"
+  description = "Octopus space display name"
   type        = string
   default     = "Default"
 }
 
-# ── Octopus project (kubearchinspect) ─────────────────────────────────────────
+# ── EBS storage ───────────────────────────────────────────────────────────────
 
-variable "kubearchinspect_project_group_name" {
-  description = "Project group to hold the kubearchinspect project"
-  type        = string
-  default     = "Platform Tooling"
-}
-
-variable "kubearchinspect_project_name" {
-  description = "Name of the Octopus project for kubearchinspect"
-  type        = string
-  default     = "kubearchinspect"
-}
-
-# ── Octopus environments ──────────────────────────────────────────────────────
-
-variable "environments" {
-  description = "Environments to create and register the deployment target into"
-  type        = list(string)
-  default     = ["Development", "Staging", "Production"]
-}
-
-# ── Octopus Kubernetes Agent (deployment target) ──────────────────────────────
-
-variable "install_octopus_agent" {
-  description = "Install the Octopus Kubernetes Agent as a deployment target"
+variable "cluster_is_auto_mode" {
+  description = "true = Auto Mode (StorageClass only, no driver). false = standard EKS."
   type        = bool
   default     = true
 }
 
+variable "ebs_storage_class_name" {
+  type    = string
+  default = "ebs-gp3"
+}
+
+variable "ebs_set_default_storage_class" {
+  type    = bool
+  default = true
+}
+
+variable "install_ebs_csi_driver" {
+  description = "Install aws-ebs-csi-driver. MUST stay false on Auto Mode."
+  type        = bool
+  default     = false
+}
+
+variable "ebs_csi_driver_chart_version" {
+  type    = string
+  default = "2.35.1"
+}
+
+# ── Octopus project (kubearchinspect) ──────────────────────────────────────────
+
+variable "kubearchinspect_project_group_name" {
+  type    = string
+  default = "Platform Tooling"
+}
+
+variable "kubearchinspect_project_name" {
+  type    = string
+  default = "kubearchinspect"
+}
+
+# ── Octopus environments ────────────────────────────────────────────────────────
+
+variable "environments" {
+  type    = list(string)
+  default = ["Development", "Staging", "Production"]
+}
+
+# ── Octopus Kubernetes Agent (deployment target) ────────────────────────────────
+
+variable "install_octopus_agent" {
+  type    = bool
+  default = true
+}
+
 variable "octopus_agent_chart_version" {
-  description = "octopusdeploy/kubernetes-agent Helm chart version (v2.x)"
-  type        = string
-  default     = "2.36.0"
+  type    = string
+  default = "2.36.0"
 }
 
 variable "octopus_agent_namespace" {
@@ -132,41 +257,35 @@ variable "octopus_agent_namespace" {
 }
 
 variable "octopus_agent_tags" {
-  description = "Target tags assigned to the deployment target (at least one required)"
-  type        = list(string)
-  default     = ["kubernetes", "eks-arm"]
+  type    = list(string)
+  default = ["kubernetes", "eks-arm"]
 }
 
 variable "octopus_agent_default_namespace" {
-  description = "Default namespace the agent deploys workloads into"
-  type        = string
-  default     = "default"
+  type    = string
+  default = "default"
 }
 
 variable "octopus_agent_storage_size" {
-  description = "Size of the EBS-backed PVC for the agent's shared filesystem"
-  type        = string
-  default     = "10Gi"
+  type    = string
+  default = "10Gi"
 }
 
 variable "octopus_agent_k8s_monitor_enabled" {
-  description = "Enable Kubernetes monitoring via the agent (requires octopus_grpc_url)"
-  type        = bool
-  default     = false
+  type    = bool
+  default = false
 }
 
-# ── Octopus Worker ─────────────────────────────────────────────────────────────
+# ── Octopus Worker ──────────────────────────────────────────────────────────────
 
 variable "install_octopus_worker" {
-  description = "Install the Octopus Kubernetes Agent in worker mode"
-  type        = bool
-  default     = true
+  type    = bool
+  default = true
 }
 
 variable "create_worker_pool" {
-  description = "Create a dedicated static worker pool for this cluster"
-  type        = bool
-  default     = true
+  type    = bool
+  default = true
 }
 
 variable "octopus_worker_pool_name" {
@@ -185,7 +304,6 @@ variable "octopus_worker_count" {
 }
 
 variable "octopus_worker_storage_size" {
-  description = "Size of the EBS-backed PVC for the worker's shared filesystem"
-  type        = string
-  default     = "10Gi"
+  type    = string
+  default = "10Gi"
 }

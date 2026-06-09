@@ -4,6 +4,10 @@ Deploys [Arm's kubearchinspect](https://github.com/ArmDeveloperEcosystem/kubearc
 as a Kubernetes Job to verify that all container images running in your cluster
 have `arm64` architecture support. Designed for use with AWS EKS Graviton node pools.
 
+In this repo it is built and deployed automatically: the GitHub workflow builds the
+arm64 image and packages the chart to ECR, and Octopus deploys it (see
+`terraform/amazon`). The steps below are for a manual install.
+
 ## Prerequisites
 
 - Helm 3.x
@@ -44,31 +48,6 @@ helm install kubearchinspect . \
   --namespace kube-system \
   --set image.repository=336151728602.dkr.ecr.us-east-1.amazonaws.com/kubearchinspect \
   --set image.tag=0.7.0
-```
-
-### Per-environment installs (Dev / Staging / Production)
-
-```bash
-# Development
-helm install kubearchinspect . \
-  -f values.yaml \
-  -f values-dev.yaml \
-  --namespace kube-system \
-  --kube-context dvb-eks-arm-dev
-
-# Staging
-helm install kubearchinspect . \
-  -f values.yaml \
-  -f values-staging.yaml \
-  --namespace kube-system \
-  --kube-context dvb-eks-arm-staging
-
-# Production
-helm install kubearchinspect . \
-  -f values.yaml \
-  -f values-prod.yaml \
-  --namespace kube-system \
-  --kube-context dvb-eks-arm-prod
 ```
 
 ## Step 3: View Results
@@ -117,9 +96,11 @@ Legend:
 
 ## Octopus Deploy Integration
 
-This chart is designed to be deployed as a **verification step** in an Octopus Deploy
-project alongside your primary application Helm chart. Recommended pipeline order:
+This chart is deployed as a **verification step** in an Octopus Deploy project. The
+deployment process (`terraform/amazon/octopus-process.tf`) runs an "Upgrade a Helm
+Chart" step that pulls the chart from the ECR feed and sets `image.repository` /
+`image.tag` from the release version. Recommended pipeline order:
 
-1. **Deploy ARM Node Pool** (Terraform / kubectl)
+1. **Deploy ARM Node Pool** (Terraform)
 2. **Run kubearchinspect** (this chart) — gate on exit code
-3. **Deploy Application** (petclinic or podinfo Helm chart)
+3. **Deploy Application** (your app's Helm chart)

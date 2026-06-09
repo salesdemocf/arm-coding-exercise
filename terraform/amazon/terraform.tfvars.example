@@ -1,33 +1,44 @@
-# ── Cluster / kubeconfig ──────────────────────────────────────────────────────
-cluster_name    = "dvb-eks-arm"
-kubeconfig_path = "~/.kube/config"
-kube_context    = "dvb-eks-arm" # matches the --alias used in the cluster Terraform
+# =============================================================================
+# Minimum to fill in: the three credentials + your repo/space identifiers.
+# Everything else has working defaults.
+#
+# Keep the API key / PAT OUT of this file — export them instead:
+#   export TF_VAR_octopus_api_key="API-xxxxxxxx"
+#   export TF_VAR_github_token="github_pat_xxxx"
+# and make sure your terminal is authenticated to AWS (SSO/profile/env).
+# =============================================================================
 
-# ── EBS storage ───────────────────────────────────────────────────────────────
-cluster_is_auto_mode          = true   # the ARM cluster from terraform/amazon is Auto Mode
-ebs_storage_class_name        = "ebs-gp3"
-ebs_set_default_storage_class = true
-install_ebs_csi_driver        = false  # MUST stay false on Auto Mode
+# ── GitHub (forked repo) ──────────────────────────────────────────────────────
+github_owner      = "your-org-or-user"
+github_repository = "kubearchinspect"   # name of YOUR fork
 
-# ── Octopus connection ────────────────────────────────────────────────────────
+# ── Octopus ────────────────────────────────────────────────────────────────────
 octopus_server_url  = "https://your-instance.octopus.app"
 octopus_polling_url = "https://your-instance.octopus.app"
-octopus_grpc_url    = "grpcs://your-instance.octopus.app:443" # only if k8s monitor enabled
 octopus_space_id    = "Spaces-1"
 octopus_space_name  = "Default"
 
-# octopus_api_key — prefer the environment variable:
-#   export TF_VAR_octopus_api_key="API-xxxx"
+# ── AWS / cluster ───────────────────────────────────────────────────────────────
+aws_region      = "us-east-1"
+cluster_name    = "dvb-eks-arm"
+cluster_version = "1.32"
 
-# ── Project / environments ────────────────────────────────────────────────────
-kubearchinspect_project_group_name = "Platform Tooling"
-kubearchinspect_project_name       = "kubearchinspect"
-environments                       = ["Development", "Staging", "Production"]
+# ── VPC: leave create_vpc = true to let Terraform build it. ──────────────────────
+# If your AWS permissions can't create VPCs, set create_vpc = false and supply:
+create_vpc = true
+# vpc_id     = "vpc-xxxxxxxx"
+# subnet_ids = ["subnet-aaa", "subnet-bbb", "subnet-ccc"]
 
-# ── Agent / worker ────────────────────────────────────────────────────────────
-install_octopus_agent       = true
-install_octopus_worker      = true
-octopus_agent_chart_version = "2.36.0"
-octopus_agent_tags          = ["kubernetes", "eks-arm"]
-octopus_worker_pool_name    = "EKS ARM Workers"
-octopus_worker_count        = 2
+# ── ECR ───────────────────────────────────────────────────────────────────────
+ecr_repository_name  = "kubearchinspect"
+create_ecr_push_user = true   # set false to use GitHub OIDC instead (see README)
+
+# ── Octopus agent / worker ────────────────────────────────────────────────────
+install_octopus_agent  = true
+install_octopus_worker = true
+environments           = ["Development", "Staging", "Production"]
+
+tags = {
+  Environment = "demo"
+  ManagedBy   = "terraform"
+}

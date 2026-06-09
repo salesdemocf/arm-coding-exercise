@@ -1,5 +1,5 @@
 {{- if not .Values.image.repository }}
-{{- fail "image.repository is required. Build and push the kubearchinspect image to your JFrog registry and set image.repository in values.yaml" }}
+{{- fail "image.repository is required. Build and push the kubearchinspect image to your registry and set image.repository (or deploy via Octopus, which sets it from the release)" }}
 {{- end }}
 ---
 apiVersion: batch/v1

@@ -1,68 +1,81 @@
-# EKS ARM — Octopus Agent, Worker & kubearchinspect Project
+# EKS ARM + Octopus + kubearchinspect — one module
 
-Terraform to register an EKS Auto Mode (Graviton/arm64) cluster with Octopus
-Deploy: it creates the Octopus project for `kubearchinspect`, three environments,
-and installs the Octopus Kubernetes Agent (deployment target) and a worker, both
-backed by EBS storage.
+From a fork of this repo plus three credentials, `terraform apply` builds an
+EKS Auto Mode (Graviton/arm64) cluster, provisions ECR and the Octopus +
+GitHub wiring, and installs the Octopus agent/worker. The GitHub workflow then
+builds the image, and Octopus deploys the kubearchinspect Helm chart.
 
-## What this creates
+## The three credentials
 
-**Octopus Deploy**
-- 1 project group (`Platform Tooling`) + 1 project (`kubearchinspect`)
-- 3 environments: Development, Staging, Production
-- 1 static worker pool (`EKS ARM Workers`)
+1. A terminal authenticated to AWS (SSO, profile, or env vars).
+2. An Octopus API key — `export TF_VAR_octopus_api_key="API-xxxx"`.
+3. A GitHub fine-grained PAT scoped to your fork — `export TF_VAR_github_token="github_pat_xxxx"`.
 
-**On the cluster**
-- A gp3 `StorageClass` (`ebs-gp3`) for the agent/worker shared filesystem
-- Octopus Kubernetes Agent as a deployment target (EBS-backed)
-- Octopus Kubernetes Agent in worker mode (EBS-backed)
+Everything else Terraform creates.
 
-## EBS storage — the important bit
-
-The ARM cluster built in `terraform/amazon` is **EKS Auto Mode**, where the EBS
-CSI controller is built in. You therefore do **not** install an EBS driver — you
-only create a `StorageClass` that uses the Auto Mode provisioner
-`ebs.csi.eks.amazonaws.com`. That is exactly what `ebs-storage.tf` does when
-`cluster_is_auto_mode = true` (the default).
-
-If you point this at a **standard** (non-Auto-Mode) EKS cluster, set
-`cluster_is_auto_mode = false` and either:
-- set `install_ebs_csi_driver = true` (installs the `aws-ebs-csi-driver` Helm
-  chart — but you must give its controller ServiceAccount IAM access via IRSA;
-  see the note in `ebs-storage.tf`), or
-- install the `aws-ebs-csi-driver` **EKS managed add-on** in your cluster
-  Terraform (recommended — it wires up the IAM for you).
-
-> EBS volumes are ReadWriteOnce (single-node attach). Unlike the chart's default
-> in-cluster NFS server (ReadWriteMany), the agent and its script pods must stay
-> on one node/AZ. Keep the agent at a single replica when using EBS.
-
-## Prerequisites
-
-- The EKS cluster is up and your kubeconfig has a context for it
-  (`aws eks update-kubeconfig --name <cluster> --region <region> --alias <cluster>`).
-- An Octopus instance, space ID, and API key.
-- `curl` and `jq` available locally (used only for destroy-time deregistration).
-
-## Usage
+## Getting started
 
 ```bash
-cp terraform.tfvars.example terraform.tfvars   # edit values
+# 1. Fork this repository on GitHub.
+# 2. Configure variables.
+cp terraform.tfvars.example terraform.tfvars   # edit github_owner, github_repository, octopus_*, region
 export TF_VAR_octopus_api_key="API-xxxx"
-
+export TF_VAR_github_token="github_pat_xxxx"
+# 3. Make sure your terminal is logged into AWS, then:
 terraform init
-terraform plan
 terraform apply
 ```
 
+## Required AWS permissions
+
+The terminal running `terraform apply` needs permission to create and manage:
+
+- EKS — `eks:CreateCluster`, `DescribeCluster`, `CreateAccessEntry`,
+  `AssociateAccessPolicy`, `TagResource`, and the matching delete/update
+  actions. Also `eks:DescribeAddonVersions` if you enable the standard driver path.
+- IAM — create/delete roles and policies, attach managed policies, `PassRole`
+  for the cluster and node roles. For the CI push user: create user, access
+  key, and inline policy. (Equivalent: `IAMFullAccess`, or a scoped policy.)
+- EC2 / VPC — when `create_vpc = true`: VPC, subnets, internet gateway, NAT
+  gateway, EIP, route tables, security groups, plus the matching describe/tag
+  actions. (Equivalent: `AmazonVPCFullAccess` + EC2 describe.)
+- ECR — `ecr:CreateRepository`, `PutLifecyclePolicy`, `DescribeRepositories`,
+  `DeleteRepository`, `TagResource`.
+
+If you cannot grant a category, use the bring-your-own fallbacks below.
+
+### Bring your own (when you lack a permission)
+
+| You can't create | Set | And supply |
+|---|---|---|
+| VPC / subnets | `create_vpc = false` | `vpc_id`, `subnet_ids` (private subnets, ≥2 AZs) |
+| IAM users | `create_ecr_push_user = false` | wire GitHub OIDC -> an IAM role instead (the workflow already has `id-token: write`) |
+| ECR repo | (provision it yourself) | point `ecr_repository_name` at the existing repo |
+
+The EKS cluster role, node role, and access entries are not optional — Auto
+Mode requires them — so the running principal must be able to create IAM roles
+and EKS access entries for the cluster itself to come up.
+
+## What gets created
+
+- AWS: VPC + public/private subnets + NAT/IGW (or BYO), EKS Auto Mode cluster,
+  ARM Graviton NodePool, ECR repo, scoped ECR push IAM user + key, gp3
+  StorageClass.
+- Octopus: `kubearchinspect` project + project group, Development/Staging/
+  Production environments, ECR feed, Kubernetes agent (deployment target) and
+  worker, and the deployment process.
+- GitHub: Actions variables (`OCTOPUS_SERVICE`, `OCTOPUS_PROJECT`,
+  `OCTOPUS_SPACE`, `AWS_REGION`, `ECR_REGISTRY`, `ECR_REPOSITORY`) and secrets
+  (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `OCTOPUS_SERVER_URL`,
+  `OCTOPUS_API_KEY`) on your fork.
+
 ## Notes
 
-- The Octopus agent image supports arm64, so it runs fine on Graviton nodes. It
-  is not pinned to arm64 here, so it may also schedule on the amd64
-  `general-purpose` Auto Mode pool. To force it onto the ARM pool, add a
-  `nodeSelector` of `kubernetes.io/arch: arm64` via the chart values.
-- The project uses the built-in **Default Lifecycle**, which auto-includes the
-  three environments. Swap `lifecycle_id` in `octopus-project.tf` if you want a
-  custom Dev → Staging → Production lifecycle.
-- Chart version is pinned via `octopus_agent_chart_version` (default `2.36.0`).
-  Bump as needed.
+- Single `terraform apply`: the kubernetes/helm providers use `aws eks
+  get-token` exec auth against the cluster this module creates, so no separate
+  kubeconfig step is needed.
+- Security: `create_ecr_push_user = true` produces a long-lived access key
+  stored in state and in GitHub secrets. Prefer GitHub OIDC for anything beyond
+  a demo.
+- ECR + EBS on Auto Mode: the EBS CSI controller is built in, so only a
+  StorageClass is created (`install_ebs_csi_driver` stays false).

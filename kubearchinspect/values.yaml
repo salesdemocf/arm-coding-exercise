@@ -3,11 +3,13 @@
 # https://github.com/ArmDeveloperEcosystem/kubearchinspect
 
 # -- Image configuration
-# NOTE: Arm does not publish an official container image for kubearchinspect.
-# You must build and push your own image to ECR using the provided Dockerfile.
-# See the README for build instructions.
+# Built and pushed to ECR by the GitHub workflow (see .github/workflows).
+# When deployed via Octopus, the Upgrade a Helm Chart step overrides
+# image.repository and image.tag from the release (octopus-process.tf), so the
+# values here are just the default for a manual `helm install`.
 image:
-  repository: "codedev.jfrog.io/dvb-demo/kubearchinspect"  # e.g. 336151728602.dkr.ecr.us-east-1.amazonaws.com/kubearchinspect
+  # <account>.dkr.ecr.<region>.amazonaws.com/kubearchinspect
+  repository: ""   # set for manual installs, e.g. 336151728602.dkr.ecr.us-east-1.amazonaws.com/kubearchinspect
   tag: "0.7.0"
   pullPolicy: IfNotPresent
 
@@ -88,6 +90,8 @@ pod:
     runAsGroup: 1000
 
 # -- Image pull secrets (for private ECR repos)
+# Not needed when nodes have ECR pull access via their instance role (the Auto
+# Mode node role includes AmazonEC2ContainerRegistryPullOnly).
 imagePullSecrets: []
 # - name: ecr-pull-secret
 
