@@ -87,8 +87,8 @@ jobs:
       - name: Build and push Docker image (arm64)
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./Dockerfile
+          context: ./kubearchinspect
+          file: ./kubearchinspect/Dockerfile
           push: true
           platforms: linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
@@ -115,7 +115,7 @@ jobs:
           aws ecr get-login-password --region "${{ vars.AWS_REGION }}" \
             | helm registry login --username AWS --password-stdin "${{ vars.ECR_REGISTRY }}"
 
-          helm package . --version "$VERSION" --app-version "$VERSION"
+          helm package ./kubearchinspect --version "$VERSION" --app-version "$VERSION"
           helm push "${{ vars.ECR_REPOSITORY }}-$VERSION.tgz" "oci://${{ vars.ECR_REGISTRY }}/charts"
 
       - name: Install Octopus CLI
