@@ -22,12 +22,15 @@ resource "octopusdeploy_runbook" "verify" {
   name        = "Verify kubearchinspect results"
   description = "Shows the kubearchinspect Job status and the arm64 compatibility report from its pod logs, run in-cluster on the Octopus agent."
 
-  retention_policy {
-    quantity_to_keep = 10
-  }
+  # Retention left at the Octopus default. The older
+  # retention_policy { quantity_to_keep = N } form is deprecated ("will soon
+  # require strategy"); omitting the block silences that and stays valid across
+  # provider versions. Add a strategy-based retention_policy block later if you
+  # need explicit run retention.
 }
 
 resource "octopusdeploy_process" "verify" {
+  project_id = octopusdeploy_project.kubearchinspect.id
   runbook_id = octopusdeploy_runbook.verify.id
 }
 

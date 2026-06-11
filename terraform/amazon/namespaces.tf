@@ -8,6 +8,12 @@ resource "kubernetes_namespace" "octopus_agent" {
     name   = var.octopus_agent_namespace
     labels = { name = var.octopus_agent_namespace }
   }
+
+  # Wait for the caller's cluster-admin RBAC. Until the access entry + policy
+  # association land, the Kubernetes provider's get-token identity has no
+  # permissions and every call returns "Unauthorized". This gates the whole
+  # in-cluster layer (SAs -> Helm releases all chain off these namespaces).
+  depends_on = [aws_eks_access_policy_association.admin]
 }
 
 resource "kubernetes_service_account" "octopus_agent" {
@@ -26,6 +32,8 @@ resource "kubernetes_namespace" "octopus_workers" {
     name   = var.octopus_worker_namespace
     labels = { name = var.octopus_worker_namespace }
   }
+
+  depends_on = [aws_eks_access_policy_association.admin]
 }
 
 resource "kubernetes_service_account" "octopus_worker" {

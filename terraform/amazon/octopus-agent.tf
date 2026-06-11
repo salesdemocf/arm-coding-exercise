@@ -4,6 +4,25 @@
 
 locals {
   agent_name = "${var.cluster_name}-agent"
+
+  octopus_is_cloud = can(regex("\\.octopus\\.app", var.octopus_server_url))
+
+  # Base comms host: explicit override if provided, otherwise the server URL.
+  octopus_polling_base = var.octopus_polling_url != "" ? var.octopus_polling_url : var.octopus_server_url
+
+  # Octopus Cloud serves polling Tentacle/agent comms on a DEDICATED host — the
+  # instance URL with a "polling." prefix (https://polling.<name>.octopus.app),
+  # never the portal/API URL. Handing the portal URL to the agent makes the
+  # Tentacle's pre-registration connectivity check hit the web app and fail with
+  # a 404 (exit code 100). So for *.octopus.app we force the "polling." prefix —
+  # even when an override URL forgot it — while never double-prefixing. Anything
+  # already prefixed, and all self-hosted URLs, pass through untouched; set
+  # var.octopus_polling_url for a self-hosted comms endpoint (e.g. host:10943).
+  octopus_polling_address = (
+    local.octopus_is_cloud && !can(regex("//polling\\.", local.octopus_polling_base))
+    ? replace(local.octopus_polling_base, "https://", "https://polling.")
+    : local.octopus_polling_base
+  )
 }
 
 resource "helm_release" "octopus_agent" {
@@ -24,7 +43,7 @@ resource "helm_release" "octopus_agent" {
         acceptEula           = "Y"
         name                 = local.agent_name
         serverUrl            = var.octopus_server_url
-        serverCommsAddresses = [var.octopus_polling_url]
+        serverCommsAddresses = [local.octopus_polling_address]
         space                = var.octopus_space_name
 
         deploymentTarget = {
@@ -39,11 +58,25 @@ resource "helm_release" "octopus_agent" {
         worker = {
           enabled = false
         }
+
+        # Pin the tentacle (agent) pod onto arm64 / Graviton.
+        nodeSelector = var.arm_pod_node_selector
+
+        # Pod securityContext (SELinux spc_t by default) — required for the
+        # tentacle to manage script pods / volume mounts on SELinux-enforcing nodes.
+        securityContext = var.agent_pod_security_context
       }
 
-      # EBS-backed shared filesystem. Providing storageClassName disables the
-      # default in-cluster NFS server and creates a PVC against this class.
+      # Pin the ephemeral script pods onto the agent's node via the chart's RWO
+      # co-location (driven by persistence.accessModes below) — that keeps them
+      # on the same single EBS volume AND on the same arm64/Graviton node as the
+      # agent, so no separate scriptPods affinity is needed.
+
+      # Direct EBS-backed workspace. EBS is block storage (ReadWriteOnce), and on
+      # chart 3.x ReadWriteOnce is the supported default: the agent co-locates its
+      # script pods on its own node so a single RWO volume serves both. No NFS.
       persistence = {
+        accessModes      = ["ReadWriteOnce"]
         storageClassName = kubernetes_storage_class_v1.ebs_gp3.metadata[0].name
         size             = var.octopus_agent_storage_size
         nfs = {
