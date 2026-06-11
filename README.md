@@ -56,7 +56,8 @@ chart, and the IAM roles plus a scoped CI user. Against the **cluster it just
 created** (using `aws eks get-token` for auth, so no kubeconfig juggling) it
 installs the Octopus Kubernetes agent and worker via Helm and creates a default
 gp3 storage class. Against **Octopus** it creates the environments, project group,
-project, two ECR feeds, and the deployment process. Against **GitHub** it writes
+project, an ECR image feed, and the deployment process (the Helm chart is
+delivered through Octopus's built-in feed). Against **GitHub** it writes
 the Actions variables and secrets your fork's workflow needs.
 
 **Release (push a `v*.*.*` tag).** The GitHub workflow authenticates to ECR,
@@ -90,14 +91,14 @@ flowchart TB
       end
       EKS["EKS Auto Mode cluster<br/>system + general-purpose pools<br/>+ arm64 Graviton NodePool"]
       ECRI["ECR repo: kubearchinspect<br/>(container image)"]
-      ECRC["ECR repo: charts/kubearchinspect<br/>(Helm chart, OCI)"]
       IAM["IAM: cluster role, node role,<br/>scoped CI push user + key"]
     end
 
     subgraph Octopus["Octopus Deploy"]
       ENVS["Environments<br/>Dev / Staging / Prod"]
       PROJ["Project: kubearchinspect"]
-      FEEDS["2x AWS ECR feeds<br/>(image + chart)"]
+      FEEDS["ECR image feed"]
+      BUILTIN["Built-in feed<br/>(Helm chart .tgz)"]
       PROC["Process:<br/>Upgrade a Helm Chart"]
     end
 
@@ -118,7 +119,7 @@ flowchart TB
     AGENT -. runs in .-> EKS
     WORKER -. runs in .-> EKS
     FEEDS -. read .-> ECRI
-    FEEDS -. read .-> ECRC
+    BUILTIN -. chart .-> AGENT
     EKS --- VPC
 ```
 
@@ -135,12 +136,13 @@ sequenceDiagram
 
     You->>GH: git push tag v1.2.3
     GH->>ECR: build + push arm64 image :1.2.3
-    GH->>ECR: helm package + push chart :1.2.3
+    GH->>OCD: helm package + upload chart 1.2.3 (built-in feed)
     GH->>OCD: push build information
     GH->>OCD: create release 1.2.3
     OCD->>AG: run "Upgrade a Helm Chart"
-    AG->>ECR: pull chart 1.2.3
+    OCD->>AG: deliver chart 1.2.3 (built-in feed, no docker)
     AG->>K8s: helm upgrade --install (image.tag = 1.2.3)
+    K8s->>ECR: kubelet pulls arm64 image 1.2.3
     K8s->>K8s: Job runs kubearchinspect
     K8s-->>You: arm64 report in pod logs
 ```
@@ -194,7 +196,6 @@ If you set `create_vpc = false`, none of these are created and you supply
 | Resource | Notes |
 |---|---|
 | `aws_ecr_repository.kubearchinspect` (+ lifecycle policy) | the container image |
-| `aws_ecr_repository.chart` | `charts/kubearchinspect`, kept separate so the chart's OCI artifact doesn't collide with the image |
 | `aws_iam_user.ecr_push` + policy + `aws_iam_access_key.ecr_push` | scoped CI user (created when `create_ecr_push_user = true`) |
 
 ### In-cluster Kubernetes (`namespaces.tf`, `ebs-storage.tf`)
@@ -215,7 +216,8 @@ If you set `create_vpc = false`, none of these are created and you supply
 | `octopusdeploy_project_group.tooling` | "Platform Tooling" |
 | `octopusdeploy_lifecycle.kubearchinspect` | custom lifecycle: **auto-deploy Development → auto-deploy Staging → stop** (Production is a manual/optional phase). Also fixes environment ordering. |
 | `octopusdeploy_project.kubearchinspect` | the project, on the custom lifecycle above |
-| `octopusdeploy_aws_elastic_container_registry.image` / `.chart` | two ECR feeds (token auto-refreshed from the CI user's keys) |
+| `octopusdeploy_aws_elastic_container_registry.image` | ECR feed for the container image (token auto-refreshed from the CI user's keys) |
+| built-in feed (`feeds-builtin`) | where the CI workflow uploads the packaged Helm chart `.tgz`; the deploy step acquires it on the agent over the Tentacle protocol (no docker) |
 | `octopusdeploy_variable.namespace` | project variable `Namespace` = `#{Octopus.Environment.Name \| ToLower}` — the per-environment target namespace used by the deploy step and runbook |
 | `octopusdeploy_process` + `octopusdeploy_process_step.helm_upgrade` | the "Upgrade a Helm Chart" deployment step |
 | `octopusdeploy_runbook.verify` (+ process/step) | the **"Verify kubearchinspect results"** runbook — runs `kubectl` in-cluster on the agent to show the arm64 report |
@@ -526,12 +528,19 @@ the included `.gitignore` already excludes `*.tfvars` and state files.
 
 ## Known caveats
 
-- **Helm step acquisition.** The Octopus provider doesn't strongly-type Helm
-  actions, so the deploy step uses raw property keys. The one value worth
-  confirming against your Octopus version is `primary_package.acquisition_location`
-  for an OCI chart pulled from an ECR feed (set to `ExecutionTarget`). If the step
-  can't find the chart, configure it once in the UI and re-export to see the exact
-  shape.
+- **The Helm chart is delivered via Octopus's built-in feed, not ECR.** An AWS
+  ECR feed always acquires with Octopus's docker-based package downloader. On a
+  Kubernetes Agent the step runs in a script pod whose image ships `helm` and
+  `kubectl` but not `docker`, so acquiring an ECR/OCI chart on the agent fails
+  with `docker: command not found`. Octopus has no OCI/Helm feed type for the
+  Helm step yet (roadmap only), so to keep acquisition **on the agent, in-cluster,
+  with no docker and without the Server running the step**, the CI workflow
+  `octopus package upload`s the packaged chart to the built-in feed and the deploy
+  step sets `primary_package.acquisition_location = "ExecutionTarget"`. The built-in
+  feed transfers the package over the Tentacle protocol. The container **image**
+  still lives in ECR and is pulled directly by the kubelet. Changing the deployment
+  process means you must create a **new release** (releases snapshot the process)
+  before redeploy.
 - **Workflow / chart layout.** GitHub Actions only discovers workflows at the
   repository **root** (`.github/workflows/`) — a `.github` nested in a
   subdirectory is silently ignored. So the workflow lives at the repo root and
