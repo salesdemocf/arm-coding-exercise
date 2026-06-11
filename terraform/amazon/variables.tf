@@ -282,6 +282,12 @@ variable "environments" {
   default = ["Development", "Staging", "Production"]
 }
 
+variable "octopus_lifecycle_name" {
+  description = "Name of the custom Octopus lifecycle (auto Dev -> auto Staging -> manual Production) used by the project"
+  type        = string
+  default     = "kubearchinspect Auto Dev to Staging"
+}
+
 # ── Octopus Kubernetes Agent (deployment target) ────────────────────────────────
 
 variable "install_octopus_agent" {

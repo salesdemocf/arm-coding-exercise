@@ -7,14 +7,15 @@
 #
 # WHERE IT RUNS — the deployment target (agent), not the worker:
 #   The step targets the Kubernetes AGENT (same tags as the deploy step). The
-#   agent already runs in-cluster with kubectl pre-authenticated and read access
-#   to kube-system (it deploys the chart there), so this needs ZERO extra RBAC.
-#   A plain worker would need a Role/RoleBinding in kube-system AND a script
-#   image that ships kubectl — and on Octopus Cloud the default worker pool is
-#   Windows (no Bash). The in-cluster Linux agent avoids all of that.
+#   agent's script pods run with a cluster-wide ClusterRoleBinding (the chart's
+#   default), so kubectl can read the per-environment namespace the deploy uses
+#   (#{Namespace}, e.g. development) with ZERO extra RBAC.
+#   A plain worker would need a Role/RoleBinding in each target namespace AND a
+#   script image that ships kubectl — and on Octopus Cloud the default worker
+#   pool is Windows (no Bash). The in-cluster Linux agent avoids all of that.
 #   To use the worker instead: set worker_pool_id = local.worker_pool_id, drop
-#   the TargetRoles, grant the octopus-worker SA read RBAC on kube-system, and
-#   run the step in a kubectl-capable execution container.
+#   the TargetRoles, grant the octopus-worker SA read RBAC on the target
+#   namespaces, and run the step in a kubectl-capable execution container.
 # ---------------------------------------------------------------------------
 
 resource "octopusdeploy_runbook" "verify" {
@@ -52,7 +53,7 @@ resource "octopusdeploy_process_step" "verify_report" {
     # $${...} are shell variables (Terraform leaves them literal); plain $(...)
     # is shell command substitution.
     "Octopus.Action.Script.ScriptBody" = <<-EOT
-      NS=kube-system
+      NS="#{Namespace}"
 
       echo "kubearchinspect Jobs in $${NS}:"
       kubectl get jobs -n "$${NS}" -l app.kubernetes.io/name=kubearchinspect || true
@@ -72,7 +73,7 @@ resource "octopusdeploy_process_step" "verify_report" {
     EOT
   }
 
-  depends_on = [octopusdeploy_runbook.verify]
+  depends_on = [octopusdeploy_runbook.verify, octopusdeploy_variable.namespace]
 }
 
 output "kubearchinspect_verify_runbook_id" {

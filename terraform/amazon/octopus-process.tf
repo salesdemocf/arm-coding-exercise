@@ -43,7 +43,7 @@ resource "octopusdeploy_process_step" "helm_upgrade" {
     "Octopus.Action.RunOnServer"        = "False"
     "Octopus.Action.Helm.ClientVersion" = "V3"
     "Octopus.Action.Helm.ReleaseName"   = var.kubearchinspect_project_name
-    "Octopus.Action.Helm.Namespace"     = "kube-system"
+    "Octopus.Action.Helm.Namespace"     = "#{Namespace}"
     "Octopus.Action.Helm.ResetValues"   = "True"
 
     # Inline values. ${...} is interpolated by Terraform (the ECR repo URL);
@@ -58,6 +58,7 @@ resource "octopusdeploy_process_step" "helm_upgrade" {
   depends_on = [
     octopusdeploy_project.kubearchinspect,
     octopusdeploy_aws_elastic_container_registry.chart,
+    octopusdeploy_variable.namespace,
   ]
 }
 

@@ -44,3 +44,24 @@ resource "kubernetes_service_account" "octopus_worker" {
     namespace = kubernetes_namespace.octopus_workers[0].metadata[0].name
   }
 }
+
+# Per-environment namespaces for kubearchinspect deployments. The deployment
+# process and the verification runbook target the namespace named after the
+# environment (Development -> development, Staging -> staging, Production ->
+# production). Pre-create them so the Helm deploy and the runbook's kubectl
+# find an existing namespace — no --create-namespace (and no cluster-level
+# namespace-create RBAC) required. Gated on the admin access grant like the
+# agent/worker namespaces above.
+resource "kubernetes_namespace" "environment" {
+  for_each = toset([for e in var.environments : lower(e)])
+
+  metadata {
+    name = each.value
+    labels = {
+      name                          = each.value
+      "app.kubernetes.io/managed-by" = "terraform"
+    }
+  }
+
+  depends_on = [aws_eks_access_policy_association.admin]
+}
