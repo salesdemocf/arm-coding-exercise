@@ -65,18 +65,15 @@ Namespace - allows override
 {{- end }}
 
 {{/*
-Build the kubearchinspect CLI args from values
+Build the kubearchinspect CLI args from values.
+The command is `images`, pointed at the mounted in-cluster kubeconfig. The only
+optional flag is --debug; kubearchinspect 0.7.0 has no namespace, check-newer-
+versions, or log-level flags.
 */}}
 {{- define "kubearchinspect.args" -}}
-{{- $args := list "images" }}
-{{- if .Values.inspect.namespace }}
-{{- $args = append $args (printf "--namespace=%s" .Values.inspect.namespace) }}
-{{- end }}
-{{- if .Values.inspect.checkNewerVersions }}
-{{- $args = append $args "--check-newer-versions" }}
-{{- end }}
-{{- if .Values.inspect.logLevel }}
-{{- $args = append $args (printf "--log-level=%s" .Values.inspect.logLevel) }}
+{{- $args := list "images" (printf "--kube-config-path=%s/kubeconfig" .Values.kubeconfig.mountPath) }}
+{{- if .Values.inspect.debug }}
+{{- $args = append $args "--debug" }}
 {{- end }}
 {{- toJson $args }}
 {{- end }}

@@ -38,13 +38,22 @@ variable "ecr_feed_secret_key" {
   default     = ""
 }
 
+# The built-in package feed's ID is only the literal "feeds-builtin" in the
+# DEFAULT space. In any other space (this repo uses "ARM-Testing") it has a
+# space-scoped ID like "Feeds-NNN", so hardcoding "feeds-builtin" fails the
+# deployment process with: Feed 'feeds-builtin' not found. Resolve the real ID
+# from the API for whichever space the provider is pointed at.
+data "octopusdeploy_feeds" "builtin" {
+  feed_type = "BuiltIn"
+}
+
 locals {
   feed_access_key = var.create_ecr_push_user ? aws_iam_access_key.ecr_push[0].id : var.ecr_feed_access_key
   feed_secret_key = var.create_ecr_push_user ? aws_iam_access_key.ecr_push[0].secret : var.ecr_feed_secret_key
 
-  # The Octopus built-in package feed has a fixed, well-known ID on every
-  # instance. No data source needed.
-  builtin_feed_id = "feeds-builtin"
+  # The single built-in feed in the configured space. Use the nested feed's
+  # `.id` (not the data source's own `.id`, which renders a non-ID value).
+  builtin_feed_id = data.octopusdeploy_feeds.builtin.feeds[0].id
 }
 
 resource "octopusdeploy_aws_elastic_container_registry" "image" {

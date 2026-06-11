@@ -65,3 +65,13 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          volumeMounts:
+            - name: kubeconfig
+              mountPath: {{ .Values.kubeconfig.mountPath }}
+              readOnly: true
+      volumes:
+        # In-cluster kubeconfig (built from the projected service-account token);
+        # kubearchinspect is pointed here via --kube-config-path.
+        - name: kubeconfig
+          configMap:
+            name: {{ include "kubearchinspect.fullname" . }}-kubeconfig
